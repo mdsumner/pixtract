@@ -58,6 +58,7 @@ def _group_by_tile(icol, irow, block_x, block_y, n_tiles_x, n_tiles_y):
 
 def _extract_gdal(path, xs, ys, band_idx, max_workers):
     from osgeo import gdal
+    gdal.UseExceptions()
     ds = gdal.Open(path)
     gt = ds.GetGeoTransform()
     nx, ny = ds.RasterXSize, ds.RasterYSize
