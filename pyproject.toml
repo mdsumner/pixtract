@@ -10,7 +10,7 @@ authors = [
 ]
 dependencies = [
     "numpy",
-    #"gdal",
+    #"gdal", osgeo.gdal is required but we don't want to build it or install from binary (WIP)
 ]
 
 [project.optional-dependencies]
