@@ -46,6 +46,9 @@ vals = extract_points(dsn, xs, ys, backend="rasterio")
 
 `xs` and `ys` are arrays of map coordinates in the raster's CRS. Returns `float64` array with `NaN` for nodata pixels.
 
+<!--
+This entire block of text and the following code block will be hidden.
+
 ## Why
 
 | Method | 500k points, 8k×8k DEFLATE |
@@ -56,6 +59,7 @@ vals = extract_points(dsn, xs, ys, backend="rasterio")
 | rasterstats | ~1400s |
 
 Clustered points (the real-world case) touch fewer tiles and run faster. 500k points hitting 47 tiles on a 16k raster: 0.07s.
+-->
 
 ## How it works
 
