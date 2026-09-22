@@ -7,3 +7,6 @@
 .quarto
 old
 *.parquet
+examples/data/
+__pycache__/
+*.pyc
