@@ -1,17 +1,8 @@
 """
-tile_extract — Fast raster point extraction via tile-aware grouped reads.
-
-No GEOS or spatial predicates needed. Tile membership is integer arithmetic
-on pixel coordinates derived from the GeoTransform:
-
-  1. Inverse GeoTransform: (x, y) → fractional (col, row)
-  2. floor(col / block_x), floor(row / block_y) → tile index
-  3. argsort + split to group points by tile
-  4. One ReadAsArray per tile, fancy-index local offsets
-
-Works with both osgeo.gdal and rasterio backends.
+The original pixtract extract_points (commit ebb69c0), kept below this
+docstring as the oracle for the regression tests (code unchanged; comments
+made ASCII). Not used by the package.
 """
-
 from __future__ import annotations
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
@@ -20,10 +11,10 @@ from typing import Literal
 __all__ = ["extract_points"]
 
 
-# ── Core geometry (shared by both backends) ─────────────────────────────
+# -- Core geometry (shared by both backends) -----------------------------
 
 def _inverse_geotransform(xs, ys, gt):
-    """Map coordinates → fractional pixel coordinates via inverse geotransform.
+    """Map coordinates -> fractional pixel coordinates via inverse geotransform.
     gt is a 6-tuple: (origin_x, pixel_w, rot_x, origin_y, rot_y, pixel_h)
     """
     det = gt[1] * gt[5] - gt[2] * gt[4]
@@ -54,7 +45,7 @@ def _group_by_tile(icol, irow, block_x, block_y, n_tiles_x, n_tiles_y):
     return unique_keys, groups, local_col, local_row, n_tiles_x
 
 
-# ── GDAL backend ───────────────────────────────────────────────────────
+# -- GDAL backend -------------------------------------------------------
 
 def _extract_gdal(path, xs, ys, band_idx, max_workers):
     from osgeo import gdal
@@ -105,7 +96,7 @@ def _extract_gdal(path, xs, ys, band_idx, max_workers):
     return result, len(unique_keys)
 
 
-# ── rasterio backend ──────────────────────────────────────────────────
+# -- rasterio backend --------------------------------------------------
 
 def _extract_rasterio(path, xs, ys, band_idx, max_workers):
     import rasterio
@@ -155,7 +146,7 @@ def _extract_rasterio(path, xs, ys, band_idx, max_workers):
     return result, len(unique_keys)
 
 
-# ── Public API ─────────────────────────────────────────────────────────
+# -- Public API ---------------------------------------------------------
 
 def extract_points(
     raster_path: str,
@@ -183,7 +174,7 @@ def extract_points(
     Returns
     -------
     np.ndarray
-        Extracted values (float64). NoData pixels → NaN.
+        Extracted values (float64). NoData pixels -> NaN.
     """
     xs = np.asarray(xs, dtype=np.float64)
     ys = np.asarray(ys, dtype=np.float64)
