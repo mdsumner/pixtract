@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .grid import gt_dim_to_extent
+
 __all__ = ["Grid", "Sources", "plan_sources", "plan_cells", "cost"]
 
 
@@ -38,24 +40,14 @@ class Grid:
     ncol: int
     nrow: int
 
-    def pixel(self, xs, ys):
-        """Map coordinates -> fractional (col, row) via the inverse geotransform."""
-        gt = self.gt
-        xs = np.asarray(xs, dtype=np.float64)
-        ys = np.asarray(ys, dtype=np.float64)
-        det = gt[1] * gt[5] - gt[2] * gt[4]
-        col = (gt[5] * (xs - gt[0]) - gt[2] * (ys - gt[3])) / det
-        row = (-gt[4] * (xs - gt[0]) + gt[1] * (ys - gt[3])) / det
-        return col, row
+    @property
+    def dimension(self):
+        """(ncol, nrow), as vaster orders it."""
+        return (self.ncol, self.nrow)
 
     def extent(self):
         """(xmin, xmax, ymin, ymax) of a north-up grid."""
-        gt = self.gt
-        if gt[2] != 0 or gt[4] != 0:
-            raise ValueError("extent() needs a north-up (unrotated) geotransform")
-        x0, x1 = gt[0], gt[0] + gt[1] * self.ncol
-        y0, y1 = gt[3], gt[3] + gt[5] * self.nrow
-        return (min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1))
+        return gt_dim_to_extent(self.gt, self.dimension)
 
 
 # -- Sources ------------------------------------------------------------

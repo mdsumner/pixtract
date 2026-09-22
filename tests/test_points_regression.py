@@ -33,9 +33,9 @@ def _inside_strict(path, xs, ys):
     """Points whose pixel is inside the raster (same test the planner uses)."""
     from osgeo import gdal
     ds = gdal.Open(path)
-    g = pixtract.Grid(ds.GetGeoTransform(), ds.RasterXSize, ds.RasterYSize)
-    col, row = g.pixel(xs, ys)
-    return (col >= 0) & (col < g.ncol) & (row >= 0) & (row < g.nrow)
+    row, _ = pixtract.rowcol_from_xy(ds.GetGeoTransform(),
+                                     (ds.RasterXSize, ds.RasterYSize), xs, ys)
+    return row >= 0
 
 
 @pytest.mark.parametrize("fixture", ["single", "mosaic", "mosaic_overlap",
@@ -59,8 +59,8 @@ def test_matches_dense(request, fixture):
     xs, ys, _ = _points(path, 5000, seed=4)
     inside = _inside_strict(path, xs, ys)
     g = pixtract.plan_sources(path).grid
-    col, row = g.pixel(xs[inside], ys[inside])
-    d = dense(path)[np.floor(row).astype(int), np.floor(col).astype(int)]
+    row, col = pixtract.rowcol_from_xy(g.gt, g.dimension, xs[inside], ys[inside])
+    d = dense(path)[row, col]
     np.testing.assert_array_equal(pixtract.extract_points(path, xs, ys)[inside], d)
 
 
@@ -71,6 +71,23 @@ def test_outside_is_nan_not_edge_value(single):
     assert (~inside).sum() > 100
     new = pixtract.extract_points(single, xs, ys)
     assert np.isnan(new[~inside]).all()
+
+
+@pytest.mark.parametrize("fixture", ["single", "mosaic"])
+def test_edge_points_are_inside(request, fixture):
+    """Points exactly on the grid's edges get the edge cell, as the original did."""
+    path = request.getfixturevalue(fixture)
+    g = pixtract.plan_sources(path).grid
+    e = g.extent()
+    # cell centres, so the along-edge coordinate is not on a cell boundary
+    xm = e[0] + (g.ncol // 3 + 0.5) * g.gt[1]
+    ym = e[3] + (g.nrow // 3 + 0.5) * g.gt[5]
+    xs = np.array([e[0], e[1], xm, xm, e[0], e[1], e[0], e[1]])
+    ys = np.array([ym, ym, e[2], e[3], e[2], e[2], e[3], e[3]])
+    new = pixtract.extract_points(path, xs, ys)
+    old = legacy_extract.extract_points(path, xs, ys)
+    assert not np.isnan(new).any()
+    np.testing.assert_array_equal(new, old)
 
 
 def test_threads_match_serial(mosaic):

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from .grid import rowcol_from_xy
+
 __all__ = ["cells_from_points", "cells_from_burn", "burn_args",
            "read_cells", "write_cells", "CELL_COLUMNS"]
 
@@ -23,13 +25,14 @@ CELL_COLUMNS = ("row", "col_start", "col_end", "id", "w")
 def cells_from_points(xs, ys, grid):
     """Single-cell runs for points inside the grid; id is the point's index.
 
-    Points outside the grid are left out of the table, so they come back as
-    NaN from the Place reducer.
+    Grid logic only, no burn. Points on the grid's edge are inside; points
+    outside are left out of the table, so they come back as NaN from the
+    Place reducer.
     """
-    col, row = grid.pixel(xs, ys)
-    ok = (col >= 0) & (col < grid.ncol) & (row >= 0) & (row < grid.nrow)
-    icol = np.floor(col[ok]).astype(np.int64)
-    irow = np.floor(row[ok]).astype(np.int64)
+    row, col = rowcol_from_xy(grid.gt, grid.dimension, xs, ys)
+    ok = row >= 0
+    icol = col[ok]
+    irow = row[ok]
     ids = np.nonzero(ok)[0].astype(np.int64)
     return {"row": irow, "col_start": icol, "col_end": icol + 1,
             "id": ids, "w": np.ones(ids.size)}

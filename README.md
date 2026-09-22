@@ -75,6 +75,14 @@ stats <- pix_execute(plan, pix_stats())
 - **Cell order**: pixel values are flat vectors in raster order (row-major from the
   top-left), as `gdalraster::read_ds()` returns them. R flips to a matrix only when
   something needs one, with `matrix(v, ncol = ncol, byrow = TRUE)`.
+- **Grid logic**: `R/grid.R` and `python/pixtract/grid.py` use the names and
+  conventions of [vaster](https://github.com/hypertidy/vaster) (`rowcol_from_xy`,
+  `cell_from_row_col`, `gt_dim_to_extent`, `extent_dim_to_gt`; dimension is
+  `(ncol, nrow)`, extent is `(xmin, xmax, ymin, ymax)`). Points are mapped to cells
+  with this grid logic, not by burning. A point on any edge of the grid is inside,
+  so one exactly on the right or bottom edge gets the last column or row; points
+  outside give NA/NaN. `tests/grid_cases.csv` holds the edge cases both languages
+  are tested against.
 
 ## Examples
 
@@ -117,7 +125,7 @@ Rscript tests/test_r.R      # the same checks for the R side
 ## Project structure
 
 ```
-python/pixtract/   plan.py, cells.py, execute.py, reduce.py, extract.py
+python/pixtract/   grid.py, plan.py, cells.py, execute.py, reduce.py, extract.py
 R/                 the same, as plain scripts; source("R/pixtract.R")
 examples/          runnable Python and R examples
 tests/             pytest suite, tests/test_r.R, synthetic fixtures
