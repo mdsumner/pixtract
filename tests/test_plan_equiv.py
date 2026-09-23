@@ -77,6 +77,14 @@ def test_zonal_stats_equals_dense(request, fixture):
             assert st["max"][k] == ref[m, 4].max()
 
 
+def test_zonal_stats_n_id_keeps_empty_zones(single):
+    cells = {"row": np.array([0]), "col_start": np.array([0]),
+             "col_end": np.array([4]), "id": np.array([1]), "w": np.ones(1)}
+    st = pixtract.zonal_stats(single, cells, n_id=4)
+    assert st["count"].tolist() == [0, 4, 0, 0]
+    assert np.isnan(st["mean"][[0, 2, 3]]).all()
+
+
 def test_vrt_is_planned_on_source_blocks(mosaic, mosaic_overlap_nodata):
     s = pixtract.plan_sources(mosaic)
     assert s.kind == "vrt" and len(s) == 6

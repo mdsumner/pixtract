@@ -146,6 +146,7 @@ Run from the repo root.
 | Swiss cantons on Copernicus GLO-90 (S3) | `examples/cantons_glo90.py` | `examples/cantons_glo90.R` |
 | read planning on a synthetic mosaic (offline) | `examples/read_plan_synthetic.py` | `examples/read_plan_synthetic.R` |
 | read planning on Copernicus GLO-30 (S3) | `examples/read_plan_glo30.py` | `examples/read_plan_glo30.R` |
+| Wherobots WorldClim countries, night-light counties, points (S3) | `examples/wherobots_worldclim.py` | |
 
 The cantons example reproduces the Apache Sedona "group by, but for pixels"
 benchmark: 26 cantons over 18 GLO-90 tiles (a 7200 x 3600 mosaic) give
@@ -153,6 +154,19 @@ benchmark: 26 cantons over 18 GLO-90 tiles (a 7200 x 3600 mosaic) give
 canton means that match its table (Valais 2138 m, Graubuenden 2023 m, Uri 1901 m,
 Glarus 1584 m, Ticino 1400 m). The plan touches 14 blocks in 14 files, 53.5 MB
 compressed.
+
+The WorldClim example reruns the Wherobots "Raster Data Analysis With Spatial
+SQL" post on the same public files. The point values match exactly (12 months
+of precipitation and the night-light value at Missoula). Yearly precipitation
+per country is the sum of 12 monthly country means; for large countries the
+cell-centre rule lands within about 0.1 to 1 percent of the published values
+(Colombia 2633.9 vs 2632.0, Malaysia 2879.5 vs 2881.2). Six of the 20
+published values, all small islands, match exactly only when a cell counts
+when its lower-right corner is inside, a half-cell offset in Sedona's
+rasterization at the time (the post used allTouched = true). The published
+county night-light means do not correspond to a mean over the county on this
+raster under any rule tried (centre, corner, all touched, whole county or the
+post's per-256-tile sum), so they are printed for reference only.
 
 ## Tests
 
