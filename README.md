@@ -108,6 +108,9 @@ python -m pytest tests      # regression against the original extract_points, an
 Rscript tests/test_r.R      # the same checks for the R side
 ```
 
+Both run on GitHub Actions for every push and pull request
+(`.github/workflows/tests.yml`, Ubuntu GDAL for Python, gdalraster for R).
+
 `tests/legacy_extract.py` is the original implementation, kept as the oracle.
 
 ## Limits
