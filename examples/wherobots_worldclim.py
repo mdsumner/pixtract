@@ -54,7 +54,7 @@ PUB_COUNTRY = {
     "Faeroe Is.": 2807.0000000000005, "Indonesia": 2733.146385760997,
     "Sierra Leone": 2717.5348837209303, "Panama": 2675.306306306307,
     "Liberia": 2656.3900709219856, "Colombia": 2631.9744668068433,
-    "Fiji": 2560.3461538461534, "São Tomé and Principe": 2555.6666666666665,
+    "Fiji": 2560.3461538461534, "S\u00e3o Tom\u00e9 and Principe": 2555.6666666666665,
     "Philippines": 2525.6388261851025,
 }
 PUB_COUNTY = {
