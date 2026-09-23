@@ -27,8 +27,8 @@ import numpy as np
 
 from .grid import gt_dim_to_extent
 
-__all__ = ["Grid", "Sources", "default_planner", "plan_sources", "plan_cells",
-           "cost"]
+__all__ = ["Grid", "Sources", "default_planner", "plan_sources", "scan_vrt",
+           "plan_cells", "cost"]
 
 
 # -- Grid ---------------------------------------------------------------
@@ -131,13 +131,23 @@ def default_planner():
     return "gdal"
 
 
-def plan_sources(dsn, band=1, planner=None, expand_vrt=True):
+def plan_sources(dsn, band=1, planner=None, expand_vrt=True, window=None):
     """Build the source table for a dataset. Metadata only, no pixel reads.
 
     A VRT is expanded into its sources when every source is a 1:1 pixel copy
     (no resampling, scaling, LUT or mask use) of the same data type as the
     VRT band; anything else is read through the VRT itself as a single
     source, and `note` says why.
+
+    `window` (xoff, yoff, xsize, ysize in the dataset's grid, 0-based; see
+    cells_window()) restricts a VRT to the sources that intersect it, before
+    any of them is checked or opened. Only those sources need to be 1:1
+    copies, so a global mosaic with resampled tiles elsewhere still expands
+    where the query is. Cells outside the window come back as uncovered.
+
+    The VRT's own XML text is read directly (scan_vrt()), because GDAL's
+    serialized copy of it drops SourceProperties; without them every source
+    would have to be opened for its size and block shape.
 
     `planner` is the library that reads the metadata: None (the default)
     uses osgeo.gdal when it is installed and rasterio otherwise. Planning is
@@ -161,7 +171,14 @@ def plan_sources(dsn, band=1, planner=None, expand_vrt=True):
     dtype = (gdal.GetDataTypeName(b.DataType), gdal.GetDataTypeSize(b.DataType) // 8)
     if expand_vrt and ds.GetDriver().ShortName == "VRT":
         try:
-            src = _vrt_sources(ds, dsn, band, grid, nodata, b.DataType)
+            text = _vrt_text(dsn)
+            if text is None:
+                xml = ds.GetMetadata("xml:VRT")
+                if not xml:
+                    raise _Unsupported("no xml:VRT metadata")
+                text = xml[0]
+            scan = _scan_xml(text, dsn, band)
+            src = _vrt_sources(scan, dsn, band, grid, nodata, dtype[0], window)
         except _Unsupported as e:
             return _single_source(dsn, band, grid, block, nodata,
                                   note=f"VRT read as one source: {e}", dtype=dtype)
@@ -190,21 +207,49 @@ class _Unsupported(Exception):
 _SOURCE_TAGS = {"SimpleSource", "ComplexSource"}
 _OK_CHILDREN = {"SourceFilename", "SourceBand", "SourceProperties", "SrcRect",
                 "DstRect", "NODATA", "OpenOptions"}
+_RECT = ("xOff", "yOff", "xSize", "ySize")
+
+#: DstRect/SrcRect values within this many pixels of an integer are taken as
+#: that integer (gdalbuildvrt writes e.g. 673200.00004 for a grid origin
+#: rounded to 1e-10 degrees; GDAL reads such a source 1:1)
+SNAP = 1e-3
 
 
-def _as_int(v, what):
-    f = float(v)
-    if f != int(f):
-        raise _Unsupported(f"non-integer {what} {v}")
-    return int(f)
+def _vrt_text(dsn):
+    """The VRT's XML as written, or None if dsn is not a readable file."""
+    if dsn.lstrip().startswith("<VRTDataset"):
+        return dsn
+    if dsn.startswith("/vsi"):
+        from osgeo import gdal
+        f = gdal.VSIFOpenL(dsn, "rb")
+        if f is None:
+            return None
+        try:
+            gdal.VSIFSeekL(f, 0, 2)
+            n = gdal.VSIFTellL(f)
+            gdal.VSIFSeekL(f, 0, 0)
+            return gdal.VSIFReadL(1, n, f).decode("utf-8")
+        finally:
+            gdal.VSIFCloseL(f)
+    if dsn.startswith(("http://", "https://")):
+        from urllib.request import urlopen
+        with urlopen(dsn) as r:
+            return r.read().decode("utf-8")
+    try:
+        with open(dsn, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return None
 
 
-def _vrt_sources(ds, dsn, band, grid, nodata, vrt_dtype):
-    from osgeo import gdal
-    xml = ds.GetMetadata("xml:VRT")
-    if not xml:
-        raise _Unsupported("no xml:VRT metadata")
-    root = ET.fromstring(xml[0])
+def _rect(el):
+    if el is None:
+        return (np.nan,) * 4
+    return tuple(float(el.get(k, "nan")) for k in _RECT)
+
+
+def _scan_xml(text, dsn, band=1):
+    root = ET.fromstring(text)
     vb = None
     for el in root.findall("VRTRasterBand"):
         if int(el.get("band", "0")) == band:
@@ -213,71 +258,141 @@ def _vrt_sources(ds, dsn, band, grid, nodata, vrt_dtype):
         raise _Unsupported(f"band {band} not found in VRT XML")
     if vb.get("subClass"):
         raise _Unsupported(f"band subClass {vb.get('subClass')}")
-    vrt_dir = posixpath.dirname(dsn)
-
-    rows = []
+    gt = root.findtext("GeoTransform")
+    nd = vb.findtext("NoDataValue")
+    vrt_dir = posixpath.dirname(dsn) if not dsn.lstrip().startswith("<") else ""
+    cols = {k: [] for k in (
+        "path", "tag", "band", "src_xoff", "src_yoff", "src_xsize", "src_ysize",
+        "dst_xoff", "dst_yoff", "dst_xsize", "dst_ysize", "file_xsize",
+        "file_ysize", "block_x", "block_y", "dtype", "nodata", "extra")}
     for el in vb:
-        if el.tag not in _SOURCE_TAGS:
-            if el.tag.endswith("Source"):
-                raise _Unsupported(f"source type {el.tag}")
+        if not el.tag.endswith("Source"):
             continue
-        extra = {c.tag for c in el} - _OK_CHILDREN
-        if extra:
-            raise _Unsupported(f"{el.tag} with {sorted(extra)}")
         fn_el = el.find("SourceFilename")
-        fn = fn_el.text
-        if fn_el.get("relativeToVRT", "0") == "1":
+        fn = "" if fn_el is None else (fn_el.text or "")
+        if fn_el is not None and fn_el.get("relativeToVRT", "0") == "1":
             fn = posixpath.join(vrt_dir, fn)
-        sband = el.findtext("SourceBand", "1")
-        if not sband.isdigit():
-            raise _Unsupported(f"SourceBand {sband}")
-        src_r = el.find("SrcRect")
-        dst_r = el.find("DstRect")
-        if src_r is None or dst_r is None:
-            raise _Unsupported("source without SrcRect/DstRect")
-        sx, sy, sw, sh = (_as_int(src_r.get(k), "SrcRect")
-                          for k in ("xOff", "yOff", "xSize", "ySize"))
-        dx, dy, dw, dh = (_as_int(dst_r.get(k), "DstRect")
-                          for k in ("xOff", "yOff", "xSize", "ySize"))
-        if (sw, sh) != (dw, dh):
-            raise _Unsupported("resampled source (SrcRect size != DstRect size)")
         props = el.find("SourceProperties")
-        if props is not None and props.get("BlockXSize"):
-            fx, fy = int(props.get("RasterXSize")), int(props.get("RasterYSize"))
-            bx, by = int(props.get("BlockXSize")), int(props.get("BlockYSize"))
-            dtype = gdal.GetDataTypeByName(props.get("DataType", ""))
-        else:
-            sds = gdal.Open(fn)
-            sb = sds.GetRasterBand(int(sband))
-            fx, fy = sds.RasterXSize, sds.RasterYSize
-            bx, by = sb.GetBlockSize()
-            dtype = sb.DataType
-            sds = None
-        if dtype != vrt_dtype:
-            raise _Unsupported("source data type differs from the VRT band")
+        props = {} if props is None else props.attrib
         tr = el.findtext("NODATA")
-        transparent = None if tr is None else float(tr)
-        # clip the destination window to the VRT grid
-        x0, y0 = max(dx, 0), max(dy, 0)
-        x1, y1 = min(dx + dw, grid.ncol), min(dy + dh, grid.nrow)
-        if x1 <= x0 or y1 <= y0:
-            continue
-        rows.append((fn, int(sband), x0, y0, x1 - x0, y1 - y0,
-                     sx + (x0 - dx), sy + (y0 - dy), fx, fy, bx, by, transparent))
+        extra = sorted({c.tag for c in el} - _OK_CHILDREN)
+        sband = el.findtext("SourceBand", "1")
+        cols["path"].append(fn)
+        cols["tag"].append(el.tag)
+        cols["band"].append(int(sband) if sband.isdigit() else -1)
+        for pre, r in (("src_", _rect(el.find("SrcRect"))),
+                       ("dst_", _rect(el.find("DstRect")))):
+            for k, v in zip(("xoff", "yoff", "xsize", "ysize"), r):
+                cols[pre + k].append(v)
+        cols["file_xsize"].append(int(props.get("RasterXSize", -1)))
+        cols["file_ysize"].append(int(props.get("RasterYSize", -1)))
+        cols["block_x"].append(int(props.get("BlockXSize", -1)))
+        cols["block_y"].append(int(props.get("BlockYSize", -1)))
+        cols["dtype"].append(props.get("DataType", ""))
+        cols["nodata"].append(np.nan if tr is None else float(tr))
+        cols["extra"].append(",".join(extra) if sband.isdigit() else f"SourceBand {sband}")
+    table = {k: (v if k in ("path", "tag", "dtype", "extra") else
+                 np.asarray(v, dtype=np.float64 if k.startswith(("src_", "dst_", "nodata"))
+                            else np.int64))
+             for k, v in cols.items()}
+    return {
+        "dsn": dsn,
+        "ncol": int(root.get("rasterXSize")),
+        "nrow": int(root.get("rasterYSize")),
+        "gt": tuple(float(v) for v in gt.split(",")) if gt else None,
+        "dtype": vb.get("dataType", ""),
+        "nodata": None if nd is None else float(nd),
+        "table": table,
+    }
 
-    if not rows:
+
+def scan_vrt(dsn, band=1):
+    """Read a VRT's XML text directly and list every source, without GDAL
+    opening the VRT or any of its sources.
+
+    Returns a dict: dsn, ncol, nrow, gt, dtype, nodata and table, one row
+    per source in VRT order: path (resolved against the VRT's directory when
+    relativeToVRT="1"), tag, band, src_* and dst_* (SrcRect and DstRect as
+    written, floats), file_xsize, file_ysize, block_x, block_y, dtype (from
+    SourceProperties, -1 or "" when absent), nodata (per-source NODATA, NaN
+    when absent) and extra (child elements the planner does not handle).
+
+    dsn is a local path, a /vsi path (read through GDAL's virtual file
+    system only), an http(s) URL, or the XML itself.
+    """
+    text = _vrt_text(dsn)
+    if text is None:
+        raise OSError(f"cannot read {dsn}")
+    return _scan_xml(text, dsn, band)
+
+
+def _snap(v, what):
+    r = np.round(v)
+    bad = ~(np.abs(v - r) <= SNAP)
+    if bad.any():
+        raise _Unsupported(f"non-integer {what} {v[bad][0]}")
+    return r.astype(np.int64)
+
+
+def _vrt_sources(scan, dsn, band, grid, nodata, vrt_dtype, window=None):
+    t = scan["table"]
+    n = len(t["path"])
+    dx, dy = t["dst_xoff"], t["dst_yoff"]
+    dw, dh = t["dst_xsize"], t["dst_ysize"]
+    keep = np.ones(n, dtype=bool)
+    if window is not None:
+        wx, wy, ww, wh = window
+        keep = (dx < wx + ww) & (dx + dw > wx) & (dy < wy + wh) & (dy + dh > wy)
+    idx = np.nonzero(keep)[0]
+    note = f"{idx.size} of {n} VRT sources intersect the window" if window is not None else ""
+    for i in idx:
+        tag = t["tag"][i]
+        if tag not in _SOURCE_TAGS:
+            raise _Unsupported(f"source type {tag}")
+        if t["extra"][i]:
+            raise _Unsupported(f"{tag} with {t['extra'][i]}")
+    if idx.size == 0:
         return None
-    cols = list(zip(*rows))
+    src_r = [_snap(t[k][idx], "SrcRect") for k in ("src_xoff", "src_yoff", "src_xsize", "src_ysize")]
+    dst_r = [_snap(t[k][idx], "DstRect") for k in ("dst_xoff", "dst_yoff", "dst_xsize", "dst_ysize")]
+    sx, sy, sw, sh = src_r
+    dx, dy, dw, dh = dst_r
+    if ((sw != dw) | (sh != dh)).any():
+        raise _Unsupported("resampled source (SrcRect size != DstRect size)")
+    fx, fy = t["file_xsize"][idx].copy(), t["file_ysize"][idx].copy()
+    bx, by = t["block_x"][idx].copy(), t["block_y"][idx].copy()
+    dtypes = [t["dtype"][i] for i in idx]
+    missing = np.nonzero((bx < 0) | (fx < 0) | np.array([d == "" for d in dtypes]))[0]
+    if missing.size:
+        # SourceProperties absent: open just those sources for their metadata
+        from osgeo import gdal
+        for j in missing:
+            i = idx[j]
+            sds = gdal.Open(t["path"][i])
+            sb = sds.GetRasterBand(int(t["band"][i]))
+            fx[j], fy[j] = sds.RasterXSize, sds.RasterYSize
+            bx[j], by[j] = sb.GetBlockSize()
+            dtypes[j] = gdal.GetDataTypeName(sb.DataType)
+            sds = None
+    if any(d != vrt_dtype for d in dtypes):
+        raise _Unsupported("source data type differs from the VRT band")
+    transparent = [None if np.isnan(v) else float(v) for v in t["nodata"][idx]]
+    # clip each destination window to the VRT grid
+    x0, y0 = np.maximum(dx, 0), np.maximum(dy, 0)
+    x1, y1 = np.minimum(dx + dw, grid.ncol), np.minimum(dy + dh, grid.nrow)
+    ok = (x1 > x0) & (y1 > y0)
+    if not ok.any():
+        return None
+    o = np.nonzero(ok)[0]
     src = Sources(
-        path=list(cols[0]), band=_i64(cols[1]), xoff=_i64(cols[2]),
-        yoff=_i64(cols[3]), xsize=_i64(cols[4]), ysize=_i64(cols[5]),
-        src_xoff=_i64(cols[6]), src_yoff=_i64(cols[7]),
-        file_xsize=_i64(cols[8]), file_ysize=_i64(cols[9]),
-        block_x=_i64(cols[10]), block_y=_i64(cols[11]),
-        transparent=list(cols[12]), grid=grid, nodata=nodata, dsn=dsn,
-        kind="vrt",
+        path=[t["path"][idx[j]] for j in o], band=t["band"][idx][o],
+        xoff=x0[o], yoff=y0[o], xsize=(x1 - x0)[o], ysize=(y1 - y0)[o],
+        src_xoff=(sx + (x0 - dx))[o], src_yoff=(sy + (y0 - dy))[o],
+        file_xsize=fx[o], file_ysize=fy[o], block_x=bx[o], block_y=by[o],
+        transparent=[transparent[j] for j in o], grid=grid, nodata=nodata,
+        dsn=dsn, kind="vrt", note=note,
     )
-    if any(t is not None for t in src.transparent) and _any_overlap(src):
+    if any(v is not None for v in src.transparent) and _any_overlap(src):
         raise _Unsupported("overlapping sources with per-source NODATA")
     return src
 

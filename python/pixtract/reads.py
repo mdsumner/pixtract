@@ -43,6 +43,7 @@ from dataclasses import replace
 import numpy as np
 
 from .grid import gt_dim_to_extent
+from .cells import cells_window
 from .plan import block_groups, default_planner, plan_cells, plan_sources
 
 __all__ = ["inspect_source", "source_table", "source_usage", "plan_reads",
@@ -408,7 +409,7 @@ def plan_extraction(dsn, cells, band=1, mem=DEFAULT_MEM, request_bytes=None,
     same max_workers and whichever reader backend you like. `planner` is as
     for plan_sources().
     """
-    sources = plan_sources(dsn, band, planner=planner)
+    sources = plan_sources(dsn, band, planner=planner, window=cells_window(cells))
     plan = plan_cells(cells, sources)
     return plan_reads(plan, mem=mem, request_bytes=request_bytes,
                       max_workers=max_workers)
