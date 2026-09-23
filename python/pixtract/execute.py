@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
-from .plan import _expand
+from .plan import _expand, default_planner
 from .reads import block_reads
 
 __all__ = ["execute", "GdalReader", "RasterioReader"]
@@ -58,6 +58,8 @@ class RasterioReader:
 
 
 def _reader(backend):
+    if backend is None:
+        backend = default_planner()
     if backend == "gdal":
         return GdalReader()
     if backend == "rasterio":
@@ -117,8 +119,12 @@ def _cells(plan, a, b, v):
     }
 
 
-def execute(plan, reducer, backend="gdal", max_workers=None):
+def execute(plan, reducer, backend=None, max_workers=None):
     """Run a plan. Returns reducer.result().
+
+    `backend` is the reader: "gdal", "rasterio", or an object with a
+    read(path, band, xoff, yoff, xsize, ysize) method. None uses osgeo.gdal
+    when it is installed and rasterio otherwise. Any reader can run any plan.
 
     Reads happen in plan order, each read window exactly once: one per
     touched block for a plan from plan_cells(), or the windows chosen by

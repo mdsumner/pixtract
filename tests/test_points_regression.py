@@ -1,5 +1,7 @@
 """extract_points must give what the original implementation gave."""
 
+import sys
+
 import numpy as np
 import pytest
 
@@ -104,6 +106,37 @@ def test_rasterio_backend(single):
     a = pixtract.extract_points(single, xs, ys, backend="rasterio")
     b = legacy_extract.extract_points(single, xs, ys, backend="rasterio")
     np.testing.assert_array_equal(a[inside], b[inside])
+
+
+@pytest.mark.parametrize("fixture", ["mosaic", "mosaic_overlap", "mosaic_srcnodata"])
+def test_rasterio_reader_uses_gdal_plan(request, fixture):
+    # backend= only picks the reader: the VRT is still expanded by osgeo.gdal
+    pytest.importorskip("rasterio")
+    path = request.getfixturevalue(fixture)
+    assert pixtract.plan_sources(path).kind == "vrt"
+    xs, ys, _ = _points(path, 5000, seed=8)
+    a = pixtract.extract_points(path, xs, ys)
+    b = pixtract.extract_points(path, xs, ys, backend="rasterio")
+    np.testing.assert_array_equal(a, b)
+
+
+def test_rasterio_planner_reads_vrt_as_one_source(mosaic):
+    pytest.importorskip("rasterio")
+    src = pixtract.plan_sources(mosaic, planner="rasterio")
+    assert src.kind == "single"
+    assert src.grid == pixtract.plan_sources(mosaic).grid
+    assert pixtract.inspect_source(mosaic, planner="rasterio")["overviews"] == []
+
+
+def test_falls_back_to_rasterio_without_gdal(mosaic, monkeypatch):
+    pytest.importorskip("rasterio")
+    xs, ys, _ = _points(mosaic, 2000, seed=9)
+    a = pixtract.extract_points(mosaic, xs, ys)
+    monkeypatch.setitem(sys.modules, "osgeo", None)
+    monkeypatch.setitem(sys.modules, "osgeo.gdal", None)
+    assert pixtract.default_planner() == "rasterio"
+    assert pixtract.plan_sources(mosaic).kind == "single"
+    np.testing.assert_array_equal(pixtract.extract_points(mosaic, xs, ys), a)
 
 
 def test_empty_and_all_outside(single):

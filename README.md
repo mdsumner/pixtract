@@ -29,6 +29,10 @@ cells  ->  plan (source, block, segment)  ->  block-ordered reads  ->  reduce
 ## Python
 
 Needs numpy and GDAL's Python bindings (`osgeo.gdal`); rasterio optional.
+Planning (grid, blocks, VRT sources) uses `osgeo.gdal` whenever it is
+installed; `backend="rasterio"` only switches the pixel reads. Without
+`osgeo.gdal` everything falls back to rasterio, which plans a VRT as a single
+source.
 No install needed: put `python/` on the path, or `pip install -e .`.
 
 ```python
