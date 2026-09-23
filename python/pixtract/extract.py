@@ -15,6 +15,7 @@ import numpy as np
 from .cells import cells_from_points
 from .execute import execute
 from .plan import plan_cells, plan_sources
+from .reads import plan_reads
 from .reduce import Cells, Place, Stats
 
 __all__ = ["extract_points", "extract_cells", "zonal_stats"]
@@ -27,6 +28,7 @@ def extract_points(
     band: int = 1,
     backend: Literal["gdal", "rasterio"] = "gdal",
     max_workers: int | None = None,
+    mem: int | None = None,
 ) -> np.ndarray:
     """Extract raster values at (x, y) coordinates using block-grouped reads.
 
@@ -43,6 +45,9 @@ def extract_points(
         planned against its source files' own blocks.
     max_workers : int or None
         Thread pool size for parallel block reads. None or 1 for serial.
+    mem : int or None
+        Memory budget in bytes for read windows (see plan_reads()). None
+        reads block by block.
 
     Returns
     -------
@@ -54,20 +59,26 @@ def extract_points(
     ys = np.asarray(ys, dtype=np.float64)
     sources = plan_sources(raster_path, band, backend=backend)
     cells = cells_from_points(xs, ys, sources.grid)
-    plan = plan_cells(cells, sources)
+    plan = _windows(plan_cells(cells, sources), mem, max_workers)
     plan.n_id = xs.size
     return execute(plan, Place(), backend=backend, max_workers=max_workers)
 
 
-def extract_cells(raster_path, cells, band=1, backend="gdal", max_workers=None):
+def _windows(plan, mem, max_workers):
+    return plan if mem is None else plan_reads(plan, mem=mem, max_workers=max_workers)
+
+
+def extract_cells(raster_path, cells, band=1, backend="gdal", max_workers=None,
+                  mem=None):
     """Every cell of a run table with its value (row, col, id, w, run, value)."""
     sources = plan_sources(raster_path, band, backend=backend)
-    plan = plan_cells(cells, sources)
+    plan = _windows(plan_cells(cells, sources), mem, max_workers)
     return execute(plan, Cells(), backend=backend, max_workers=max_workers)
 
 
-def zonal_stats(raster_path, cells, band=1, backend="gdal", max_workers=None):
+def zonal_stats(raster_path, cells, band=1, backend="gdal", max_workers=None,
+                mem=None):
     """count, weight, sum, mean, min, max per id over a run table."""
     sources = plan_sources(raster_path, band, backend=backend)
-    plan = plan_cells(cells, sources)
+    plan = _windows(plan_cells(cells, sources), mem, max_workers)
     return execute(plan, Stats(), backend=backend, max_workers=max_workers)

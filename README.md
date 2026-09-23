@@ -65,6 +65,53 @@ pix_cost(plan)
 stats <- pix_execute(plan, pix_stats())
 ```
 
+## Read planning: sources, memory and read windows
+
+Block-by-block reads are exact but make one call per block; one big read of a
+whole file makes one call but decodes everything. Which is better depends on
+where the query falls, so the planner looks at the source first and then at
+the query:
+
+```python
+info = pixtract.inspect_source(dsn)   # grid, dtype, blocks, overviews, one row per VRT source
+plan = pixtract.plan_cells(cells, info["sources"])
+pixtract.source_usage(plan)           # per source: cells, runs, blocks touched, occupancy
+plan = pixtract.plan_reads(plan, mem=256 * 2**20, max_workers=8)
+plan.reads                            # one row per read window: src, xoff, yoff, xsize, ysize, ...
+plan.extra["meta"]                    # per source: meta-tile shape chosen, its cost, block-read cost
+pixtract.execute(plan, pixtract.Stats(), max_workers=8)
+```
+
+```r
+info <- pix_inspect(dsn)
+plan <- pix_plan(cells, info$sources)
+pix_usage(plan)
+plan <- pix_plan_reads(plan, mem = 256 * 2^20)
+attr(plan, "reads"); attr(plan, "meta")
+pix_execute(plan, pix_stats())
+```
+
+- **Inspect** reads metadata only: the dataset's grid, data type, block size and
+  overviews, and for a VRT mosaic one row per source with its place in the
+  mosaic, its map extent and its own block layout.
+- **Usage** says which sources the query implicates and how densely it hits each:
+  blocks touched, the span of their bounding box, and occupancy (touched / span,
+  near 1 for a clustered query, near 0 for a scattered one).
+- **Read windows** ("meta-tiles"): each source's block grid is covered by a coarser
+  grid of kx x ky blocks. In each meta-tile the touched blocks are read as one
+  window (their bounding box) or block by block, whichever costs less under
+  `cost(read) = request_bytes + decoded bytes`. `request_bytes` is the fixed cost
+  of one read call, in bytes: 64 KiB for local files, 2 MiB for remote ones
+  (`/vsicurl`, `/vsis3`, `http`, ...), or pass your own. (kx, ky) is chosen per
+  source from powers of two up to the whole file, as the cheapest shape whose
+  largest window fits the memory budget for one read: `mem` divided by the reads
+  `execute()` holds at once (2 x `max_workers` with threads; the R executor is
+  serial, so all of it).
+- Every reducer works unchanged, and `extract_points()`, `extract_cells()` and
+  `zonal_stats()` (and the `pix_` versions in R) take `mem=` to plan windows;
+  without it they read block by block as before.
+- Overviews are reported but not used: extraction reads native-resolution cells.
+
 ## Conventions
 
 - **Index base**: 1-based in R (row 1 at the top, inclusive `col_end`, as cbr and
@@ -93,6 +140,8 @@ Run from the repo root.
 | points on a synthetic mosaic (offline) | `examples/points_synthetic.py` | `examples/points_synthetic.R` |
 | zonal stats on a synthetic mosaic (offline) | `examples/zonal_synthetic.py` | `examples/zonal_synthetic.R` |
 | Swiss cantons on Copernicus GLO-90 (S3) | `examples/cantons_glo90.py` | `examples/cantons_glo90.R` |
+| read planning on a synthetic mosaic (offline) | `examples/read_plan_synthetic.py` | `examples/read_plan_synthetic.R` |
+| read planning on Copernicus GLO-30 (S3) | `examples/read_plan_glo30.py` | `examples/read_plan_glo30.R` |
 
 The cantons example reproduces the Apache Sedona "group by, but for pixels"
 benchmark: 26 cantons over 18 GLO-90 tiles (a 7200 x 3600 mosaic) give
@@ -121,6 +170,10 @@ Both run on GitHub Actions for every push and pull request
   block-planned, just on the dataset's own blocks.
 - Overlapping VRT sources: the last one wins, as in the VRT. Overlap combined with
   per-source NODATA falls back to reading through the VRT.
+- The read-window cost model is a heuristic: decoded bytes stand in for bytes
+  fetched and decompressed, and a window read counts as one request (GDAL merges
+  the byte ranges of a COG window, but not always into one). Tune it with
+  `request_bytes`.
 - In R, gdalraster returns a source file's own nodata as NA; inside a VRT that is
   treated as a transparent pixel (the VRT's fill value), which matches VRTs built
   by `gdalbuildvrt` with source nodata.
@@ -128,7 +181,7 @@ Both run on GitHub Actions for every push and pull request
 ## Project structure
 
 ```
-python/pixtract/   grid.py, plan.py, cells.py, execute.py, reduce.py, extract.py
+python/pixtract/   grid.py, plan.py, cells.py, reads.py, execute.py, reduce.py, extract.py
 R/                 the same, as plain scripts; source("R/pixtract.R")
 examples/          runnable Python and R examples
 tests/             pytest suite, tests/test_r.R, synthetic fixtures

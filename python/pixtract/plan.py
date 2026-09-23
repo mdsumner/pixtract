@@ -66,6 +66,8 @@ class Sources:
     file_xsize, file_ysize: size of the source file, to clip block reads.
     block_x, block_y: the source file's block size.
     transparent: per-source value treated as "not painted" (VRT <NODATA>).
+    dtype, itemsize: data type name and bytes per cell of the queried band,
+    used to size reads in memory.
     """
 
     path: list
@@ -86,6 +88,8 @@ class Sources:
     dsn: str = ""
     kind: str = "single"
     note: str = ""
+    dtype: str = "Float64"
+    itemsize: int = 8
 
     def __len__(self):
         return len(self.path)
@@ -105,7 +109,7 @@ def _i64(x):
     return np.asarray(x, dtype=np.int64)
 
 
-def _single_source(dsn, band, grid, block, nodata, note=""):
+def _single_source(dsn, band, grid, block, nodata, note="", dtype=("Float64", 8)):
     return Sources(
         path=[dsn], band=_i64([band]), xoff=_i64([0]), yoff=_i64([0]),
         xsize=_i64([grid.ncol]), ysize=_i64([grid.nrow]),
@@ -113,7 +117,7 @@ def _single_source(dsn, band, grid, block, nodata, note=""):
         file_xsize=_i64([grid.ncol]), file_ysize=_i64([grid.nrow]),
         block_x=_i64([block[0]]), block_y=_i64([block[1]]),
         transparent=[None], grid=grid, nodata=nodata, dsn=dsn,
-        kind="single", note=note,
+        kind="single", note=note, dtype=dtype[0], itemsize=dtype[1],
     )
 
 
@@ -134,15 +138,17 @@ def plan_sources(dsn, band=1, backend="gdal", expand_vrt=True):
     b = ds.GetRasterBand(band)
     nodata = b.GetNoDataValue()
     block = b.GetBlockSize()
+    dtype = (gdal.GetDataTypeName(b.DataType), gdal.GetDataTypeSize(b.DataType) // 8)
     if expand_vrt and ds.GetDriver().ShortName == "VRT":
         try:
             src = _vrt_sources(ds, dsn, band, grid, nodata, b.DataType)
         except _Unsupported as e:
             return _single_source(dsn, band, grid, block, nodata,
-                                  note=f"VRT read as one source: {e}")
+                                  note=f"VRT read as one source: {e}", dtype=dtype)
         if src is not None:
+            src.dtype, src.itemsize = dtype
             return src
-    return _single_source(dsn, band, grid, block, nodata)
+    return _single_source(dsn, band, grid, block, nodata, dtype=dtype)
 
 
 def _plan_sources_rasterio(dsn, band):
@@ -151,8 +157,10 @@ def _plan_sources_rasterio(dsn, band):
         grid = Grid(tuple(src.transform.to_gdal()), src.width, src.height)
         by, bx = src.block_shapes[band - 1]  # rasterio gives (rows, cols)
         nodata = src.nodata
+        dt = np.dtype(src.dtypes[band - 1])
     return _single_source(dsn, band, grid, (bx, by), nodata,
-                          note="rasterio backend reads the dataset as one source")
+                          note="rasterio backend reads the dataset as one source",
+                          dtype=(src.dtypes[band - 1], dt.itemsize))
 
 
 class _Unsupported(Exception):
@@ -277,6 +285,10 @@ class Plan:
     inside the block; `row`, `col` locate the segment's first cell in the
     queried grid; `run` indexes the input cell table. src == -1 marks cells
     that no source covers.
+
+    `reads` is None until plan_reads() groups blocks into read windows; it
+    then holds the read table and every segment has a `read` column, with
+    segments sorted by read.
     """
 
     seg: dict
@@ -285,6 +297,7 @@ class Plan:
     n_run: int
     order: str = "src, brow, bcol"
     extra: dict = field(default_factory=dict)
+    reads: dict | None = None
 
     def __len__(self):
         return len(self.seg["src"])
@@ -425,6 +438,9 @@ def block_groups(plan):
 def cost(plan, bytes=False):
     """What a plan will read, before any pixel I/O.
 
+    blocks counts touched source blocks; with read windows from plan_reads(),
+    reads and read_bytes (decoded, in memory) count what the windows fetch.
+
     With bytes=True, block byte counts are looked up from TIFF metadata
     (BLOCK_SIZE_x_y), which reads only the IFD; None where unavailable.
     """
@@ -438,6 +454,11 @@ def cost(plan, bytes=False):
         "blocks": int(covered.sum()),
         "uncovered_cells": int((s["c1"] - s["c0"])[s["src"] < 0].sum()),
     }
+    if plan.reads is not None:
+        rd = plan.reads
+        ok = rd["src"] >= 0
+        out["reads"] = int(ok.sum())
+        out["read_bytes"] = int(rd["bytes"][ok].sum())
     if bytes:
         out["bytes"] = _block_bytes(plan, starts[covered])
     return out
