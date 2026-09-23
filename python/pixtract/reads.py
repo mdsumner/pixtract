@@ -43,7 +43,7 @@ from dataclasses import replace
 import numpy as np
 
 from .grid import gt_dim_to_extent
-from .plan import block_groups, plan_cells, plan_sources
+from .plan import block_groups, default_planner, plan_cells, plan_sources
 
 __all__ = ["inspect_source", "source_table", "source_usage", "plan_reads",
            "block_reads", "plan_extraction", "request_bytes_for",
@@ -103,7 +103,7 @@ def source_table(sources):
     }
 
 
-def inspect_source(dsn, band=1, backend="gdal", overviews=True):
+def inspect_source(dsn, band=1, planner=None, overviews=True):
     """What a dataset is made of, from metadata only (no pixel reads).
 
     Returns a dict: dsn, driver, kind ("vrt" when the VRT was expanded into
@@ -113,9 +113,12 @@ def inspect_source(dsn, band=1, backend="gdal", overviews=True):
     Sources object that plan_cells() takes) and table (source_table()).
 
     Overviews are reported, not used: extraction reads native-resolution
-    cells.
+    cells. `planner` is as for plan_sources(); driver, block and overviews
+    are only filled in by osgeo.gdal.
     """
-    src = plan_sources(dsn, band, backend=backend)
+    if planner is None:
+        planner = default_planner()
+    src = plan_sources(dsn, band, planner=planner)
     out = {
         "dsn": dsn, "driver": None, "kind": src.kind,
         "ncol": src.grid.ncol, "nrow": src.grid.nrow, "gt": src.grid.gt,
@@ -123,7 +126,7 @@ def inspect_source(dsn, band=1, backend="gdal", overviews=True):
         "nodata": src.nodata, "note": src.note, "overviews": [],
         "sources": src, "table": source_table(src),
     }
-    if backend == "gdal":
+    if planner == "gdal":
         from osgeo import gdal
         gdal.UseExceptions()
         ds = gdal.Open(dsn)
@@ -397,14 +400,15 @@ def _with_reads(plan, b, read_of):
 
 
 def plan_extraction(dsn, cells, band=1, mem=DEFAULT_MEM, request_bytes=None,
-                    max_workers=None, backend="gdal"):
+                    max_workers=None, planner=None):
     """Sources, cell plan and read windows for a query, in one call.
 
     `cells` is a run table (for points, cells_from_points(xs, ys, grid) with
     the grid of plan_sources(dsn)). Pass the result to execute() with the
-    same max_workers.
+    same max_workers and whichever reader backend you like. `planner` is as
+    for plan_sources().
     """
-    sources = plan_sources(dsn, band, backend=backend)
+    sources = plan_sources(dsn, band, planner=planner)
     plan = plan_cells(cells, sources)
     return plan_reads(plan, mem=mem, request_bytes=request_bytes,
                       max_workers=max_workers)

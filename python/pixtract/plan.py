@@ -27,7 +27,8 @@ import numpy as np
 
 from .grid import gt_dim_to_extent
 
-__all__ = ["Grid", "Sources", "plan_sources", "plan_cells", "cost"]
+__all__ = ["Grid", "Sources", "default_planner", "plan_sources", "plan_cells",
+           "cost"]
 
 
 # -- Grid ---------------------------------------------------------------
@@ -121,16 +122,35 @@ def _single_source(dsn, band, grid, block, nodata, note="", dtype=("Float64", 8)
     )
 
 
-def plan_sources(dsn, band=1, backend="gdal", expand_vrt=True):
+def default_planner():
+    """"gdal" when osgeo.gdal is importable, else "rasterio"."""
+    try:
+        from osgeo import gdal  # noqa: F401
+    except ImportError:
+        return "rasterio"
+    return "gdal"
+
+
+def plan_sources(dsn, band=1, planner=None, expand_vrt=True):
     """Build the source table for a dataset. Metadata only, no pixel reads.
 
     A VRT is expanded into its sources when every source is a 1:1 pixel copy
     (no resampling, scaling, LUT or mask use) of the same data type as the
     VRT band; anything else is read through the VRT itself as a single
     source, and `note` says why.
+
+    `planner` is the library that reads the metadata: None (the default)
+    uses osgeo.gdal when it is installed and rasterio otherwise. Planning is
+    independent of the reader: a plan made with osgeo.gdal can be executed
+    with backend="rasterio". Only osgeo.gdal expands a VRT; with rasterio the
+    dataset is always one source.
     """
-    if backend == "rasterio":
+    if planner is None:
+        planner = default_planner()
+    if planner == "rasterio":
         return _plan_sources_rasterio(dsn, band)
+    if planner != "gdal":
+        raise ValueError(f"Unknown planner: {planner!r}")
     from osgeo import gdal
     gdal.UseExceptions()
     ds = gdal.Open(dsn)
@@ -159,7 +179,7 @@ def _plan_sources_rasterio(dsn, band):
         nodata = src.nodata
         dt = np.dtype(src.dtypes[band - 1])
     return _single_source(dsn, band, grid, (bx, by), nodata,
-                          note="rasterio backend reads the dataset as one source",
+                          note="rasterio planner reads the dataset as one source",
                           dtype=(src.dtypes[band - 1], dt.itemsize))
 
 

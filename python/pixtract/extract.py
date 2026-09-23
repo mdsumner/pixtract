@@ -26,7 +26,7 @@ def extract_points(
     xs: np.ndarray,
     ys: np.ndarray,
     band: int = 1,
-    backend: Literal["gdal", "rasterio"] = "gdal",
+    backend: Literal["gdal", "rasterio"] | None = None,
     max_workers: int | None = None,
     mem: int | None = None,
 ) -> np.ndarray:
@@ -40,9 +40,11 @@ def extract_points(
         Map coordinates in the raster's CRS.
     band : int
         Band number (GDAL numbering, starting at 1).
-    backend : "gdal" | "rasterio"
-        Which library to use for I/O. With "gdal" a VRT of 1:1 sources is
-        planned against its source files' own blocks.
+    backend : "gdal" | "rasterio" | None
+        Which library reads the pixels; None uses osgeo.gdal when it is
+        installed, else rasterio. Planning always uses osgeo.gdal
+        when it is installed (see plan_sources()), so a VRT of 1:1 sources
+        is planned against its source files' own blocks with either reader.
     max_workers : int or None
         Thread pool size for parallel block reads. None or 1 for serial.
     mem : int or None
@@ -57,7 +59,7 @@ def extract_points(
     """
     xs = np.asarray(xs, dtype=np.float64)
     ys = np.asarray(ys, dtype=np.float64)
-    sources = plan_sources(raster_path, band, backend=backend)
+    sources = plan_sources(raster_path, band)
     cells = cells_from_points(xs, ys, sources.grid)
     plan = _windows(plan_cells(cells, sources), mem, max_workers)
     plan.n_id = xs.size
@@ -68,17 +70,17 @@ def _windows(plan, mem, max_workers):
     return plan if mem is None else plan_reads(plan, mem=mem, max_workers=max_workers)
 
 
-def extract_cells(raster_path, cells, band=1, backend="gdal", max_workers=None,
+def extract_cells(raster_path, cells, band=1, backend=None, max_workers=None,
                   mem=None):
     """Every cell of a run table with its value (row, col, id, w, run, value)."""
-    sources = plan_sources(raster_path, band, backend=backend)
+    sources = plan_sources(raster_path, band)
     plan = _windows(plan_cells(cells, sources), mem, max_workers)
     return execute(plan, Cells(), backend=backend, max_workers=max_workers)
 
 
-def zonal_stats(raster_path, cells, band=1, backend="gdal", max_workers=None,
+def zonal_stats(raster_path, cells, band=1, backend=None, max_workers=None,
                 mem=None):
     """count, weight, sum, mean, min, max per id over a run table."""
-    sources = plan_sources(raster_path, band, backend=backend)
+    sources = plan_sources(raster_path, band)
     plan = _windows(plan_cells(cells, sources), mem, max_workers)
     return execute(plan, Stats(), backend=backend, max_workers=max_workers)
