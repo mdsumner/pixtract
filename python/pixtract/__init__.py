@@ -1,3 +1,5 @@
+from .grid import (rowcol_from_xy, cell_from_row_col, gt_dim_to_extent,
+                   extent_dim_to_gt)
 from .plan import Grid, Sources, Plan, plan_sources, plan_cells, cost
 from .cells import (cells_from_points, cells_from_burn, burn_args,
                     read_cells, write_cells)

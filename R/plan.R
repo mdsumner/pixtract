@@ -25,32 +25,6 @@ pix_grid <- function(dsn) {
   list(gt = ds$getGeoTransform(), ncol = d[1L], nrow = d[2L])
 }
 
-## map coordinates -> 1-based (row, col); NA outside the grid
-pix_cell_of <- function(grid, x, y) {
-  gt <- grid$gt
-  det <- gt[2L] * gt[6L] - gt[3L] * gt[5L]
-  px <- (gt[6L] * (x - gt[1L]) - gt[3L] * (y - gt[4L])) / det
-  py <- (-gt[5L] * (x - gt[1L]) + gt[2L] * (y - gt[4L])) / det
-  col <- floor(px) + 1
-  row <- floor(py) + 1
-  bad <- is.na(col) | is.na(row) | col < 1 | col > grid$ncol | row < 1 | row > grid$nrow
-  col[bad] <- NA
-  row[bad] <- NA
-  data.frame(row = as.integer(row), col = as.integer(col))
-}
-
-## flat index into a raster-order vector of the whole grid
-pix_cell_index <- function(row, col, ncol) (row - 1) * ncol + col
-
-## c(xmin, xmax, ymin, ymax) of a north-up grid
-pix_extent <- function(grid) {
-  gt <- grid$gt
-  if (gt[3L] != 0 || gt[5L] != 0) stop("pix_extent() needs a north-up geotransform")
-  x <- gt[1L] + c(0, grid$ncol) * gt[2L]
-  y <- gt[4L] + c(0, grid$nrow) * gt[6L]
-  c(min(x), max(x), min(y), max(y))
-}
-
 ## -- Sources ------------------------------------------------------------
 
 ## One row per source window. For a plain file that is the file itself; a

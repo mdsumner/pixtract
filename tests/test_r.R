@@ -43,7 +43,7 @@ expand_ref <- function(cells, v) {
   col <- sequence(n, from = lo)
   row <- cells$row[run]
   data.frame(run = run, row = row, col = col, id = cells$id[run], w = cells$w[run],
-             value = v[pix_cell_index(row, col, ncol)])
+             value = v[cell_from_row_col(c(ncol, nrow), row, col)])
 }
 
 ok <- function(cond, msg) if (!isTRUE(cond)) stop(msg, call. = FALSE)
@@ -74,17 +74,38 @@ for (nm in names(fixtures)) {
 
   ## points, including some outside the extent
   g <- pix_grid(f)
-  e <- pix_extent(g)
+  e <- gt_dim_to_extent(g$gt, c(g$ncol, g$nrow))
   set.seed(5)
   x <- runif(3000, e[1] - 0.2, e[2] + 0.2); y <- runif(3000, e[3] - 0.2, e[4] + 0.2)
+  ## points on every edge are inside (along-edge coordinate at a cell centre)
+  xm <- e[1] + (g$ncol %/% 3 + 0.5) * g$gt[2]; ym <- e[4] + (g$nrow %/% 3 + 0.5) * g$gt[6]
+  x <- c(x, e[1], e[2], xm, xm, e[1], e[2], e[1], e[2])
+  y <- c(y, ym, ym, e[3], e[4], e[3], e[3], e[4], e[4])
   pv <- pix_extract_points(f, x, y)
-  rc <- pix_cell_of(g, x, y)
+  rc <- rowcol_from_xy(g$gt, c(g$ncol, g$nrow), x, y)
   inside <- !is.na(rc$row)
-  ref_p <- v[pix_cell_index(rc$row[inside], rc$col[inside], g$ncol)]
+  ok(all(inside[3001:3008]), paste(nm, "edge points are inside"))
+  ref_p <- v[cell_from_row_col(c(g$ncol, g$nrow), rc$row[inside], rc$col[inside])]
   ok(all(is.na(pv[!inside])), paste(nm, "outside points are NA"))
   ok(identical(is.na(pv[inside]), is.na(ref_p)) && all(pv[inside] == ref_p, na.rm = TRUE),
      paste(nm, "points"))
 }
+
+## grid logic: the edge cases shared with tests/test_grid.py (0-based on disk)
+gc <- utils::read.csv("tests/grid_cases.csv")
+for (nm in unique(gc$grid)) {
+  s <- gc[gc$grid == nm, ]
+  gt <- unlist(s[1L, paste0("gt", 0:5)], use.names = FALSE)
+  rc <- rowcol_from_xy(gt, c(s$ncol[1L], s$nrow[1L]), s$x, s$y)
+  want_row <- ifelse(s$row < 0, NA_integer_, s$row + 1L)
+  want_col <- ifelse(s$col < 0, NA_integer_, s$col + 1L)
+  ok(identical(rc$row, as.integer(want_row)) && identical(rc$col, as.integer(want_col)),
+     paste("grid cases", nm))
+}
+ok(identical(cell_from_row_col(c(10, 5), c(1, 1, 5, 3, 6, 1), c(1, 10, 10, 4, 1, 0)),
+             c(1, 10, 50, 24, NA, NA)), "cell_from_row_col")
+ok(isTRUE(all.equal(extent_dim_to_gt(c(100, 110, -37, -30), c(1000, 700)),
+                    c(100, 0.01, 0, -30, 0, -0.01))), "extent_dim_to_gt")
 
 src <- pix_sources(fixtures$mosaic)
 ok(attr(src, "kind") == "vrt" && nrow(src) == 6L, "mosaic expands to 6 sources")

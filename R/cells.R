@@ -7,9 +7,10 @@
 ## On disk the convention is 0-based and half-open for every language
 ## (agreed); pix_write_cells() and pix_read_cells() convert.
 
-## single-cell runs for points inside the grid; id is the point's position
+## single-cell runs for points inside the grid (grid logic only, no burn);
+## id is the point's position. Points on the grid's edge are inside.
 pix_cells_points <- function(x, y, grid) {
-  rc <- pix_cell_of(grid, x, y)
+  rc <- rowcol_from_xy(grid$gt, c(grid$ncol, grid$nrow), x, y)
   ok <- which(!is.na(rc$row))
   data.frame(row = rc$row[ok], col_start = rc$col[ok], col_end = rc$col[ok],
              id = ok, w = rep(1, length(ok)))
@@ -32,7 +33,7 @@ pix_cells_burn <- function(b, edges = TRUE) {
 
 ## extent and dimension for cb_burn() / burn() so the burn is on `grid`
 pix_burn_args <- function(grid) {
-  list(extent = pix_extent(grid), dimension = c(grid$ncol, grid$nrow))
+  list(extent = gt_dim_to_extent(grid$gt, c(grid$ncol, grid$nrow)), dimension = c(grid$ncol, grid$nrow))
 }
 
 ## 0-based crossing (agreed): tables on disk are 0-based and half-open.
