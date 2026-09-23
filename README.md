@@ -146,6 +146,7 @@ Run from the repo root.
 | Swiss cantons on Copernicus GLO-90 (S3) | `examples/cantons_glo90.py` | `examples/cantons_glo90.R` |
 | read planning on a synthetic mosaic (offline) | `examples/read_plan_synthetic.py` | `examples/read_plan_synthetic.R` |
 | read planning on Copernicus GLO-30 (S3) | `examples/read_plan_glo30.py` | `examples/read_plan_glo30.R` |
+| Swiss cantons on the global COP30 VRT (26,475 tiles) | `examples/cantons_cop30_global.py` | |
 | Wherobots WorldClim countries, night-light counties, points (S3) | `examples/wherobots_worldclim.py` | |
 | human footprint (HFP-100) mean per PAD-US protected area (S3) | `examples/hfp_padus.py` | |
 
@@ -155,6 +156,14 @@ benchmark: 26 cantons over 18 GLO-90 tiles (a 7200 x 3600 mosaic) give
 canton means that match its table (Valais 2138 m, Graubuenden 2023 m, Uri 1901 m,
 Glarus 1584 m, Ticino 1400 m). The plan touches 14 blocks in 14 files, 53.5 MB
 compressed.
+
+The global version plans against OpenTopography's COP30_hh.vrt (26,475 sources)
+without opening it or any tile: `scan_vrt()` reads the VRT's XML text (0.5 to
+1 s), the cantons are burned on the 1296001 x 626401 global grid (0.3 s, the
+burn is sparse), and `plan_sources(dsn, window=cells_window(cells))` keeps the 18
+sources the burn's window touches. Only those have to be 1:1 copies; the 14,589
+resampled high-latitude sources elsewhere no longer send the whole VRT to one
+source. 63,054,224 cells, 36 reads, 357 MiB decoded.
 
 The WorldClim example reruns the Wherobots "Raster Data Analysis With Spatial
 SQL" post on the same public files. The point values match exactly (12 months

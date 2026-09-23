@@ -16,7 +16,7 @@ import numpy as np
 
 from .grid import rowcol_from_xy
 
-__all__ = ["cells_from_points", "cells_from_burn", "burn_args",
+__all__ = ["cells_from_points", "cells_from_burn", "burn_args", "cells_window",
            "read_cells", "write_cells", "CELL_COLUMNS"]
 
 CELL_COLUMNS = ("row", "col_start", "col_end", "id", "w")
@@ -69,6 +69,22 @@ def cells_from_burn(r, edges=True):
 def burn_args(grid):
     """extent and shape for controlledburn.burn() so the burn is on `grid`."""
     return {"extent": grid.extent(), "shape": (grid.nrow, grid.ncol)}
+
+
+def cells_window(cells):
+    """Bounding window of a run table: (xoff, yoff, xsize, ysize), 0-based,
+    in the grid the runs are on, or None when the table is empty.
+
+    plan_sources(dsn, window=...) uses it to keep only the VRT sources a
+    query can touch.
+    """
+    row = np.asarray(cells["row"])
+    if row.size == 0:
+        return None
+    c0 = int(np.min(cells["col_start"]))
+    c1 = int(np.max(cells["col_end"]))
+    r0, r1 = int(row.min()), int(row.max()) + 1
+    return (c0, r0, c1 - c0, r1 - r0)
 
 
 def write_cells(path, cells):

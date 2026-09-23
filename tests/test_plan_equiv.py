@@ -1,5 +1,7 @@
 """Planned reads over run tables must equal a dense read + index."""
 
+import os
+
 import numpy as np
 import pytest
 
@@ -110,3 +112,43 @@ def test_cells_csv_roundtrip(tmp):
     for k in ("row", "col_start", "col_end", "id"):
         np.testing.assert_array_equal(back[k], cells[k])
     np.testing.assert_array_equal(back["w"], cells["w"])
+
+
+def _global_like(mosaic, tmp):
+    """The 3 x 2 mosaic as a big VRT would write it: DstRect offsets a hair
+    off integers (673200.00004 in COP30_hh.vrt) and one resampled source
+    (the last tile, at half resolution), as the high-latitude tiles are."""
+    import re
+    text = open(mosaic).read()
+    text = re.sub(r'<DstRect xOff="(\d+)" yOff="(\d+)"',
+                  lambda m: f'<DstRect xOff="{m.group(1)}.00004" yOff="{m.group(2)}.00004"',
+                  text)
+    parts = text.split("<SrcRect ")
+    parts[-1] = re.sub(r'xSize="300"', 'xSize="150"', parts[-1], count=1)
+    text = "<SrcRect ".join(parts)
+    path = str(tmp / "global_like.vrt")
+    with open(path, "w") as f:
+        f.write(text.replace('relativeToVRT="1">', 'relativeToVRT="0">'
+                             + os.path.dirname(mosaic) + "/"))
+    return path
+
+
+def test_vrt_window_keeps_only_touched_sources(mosaic, tmp):
+    path = _global_like(mosaic, tmp)
+    scan = pixtract.scan_vrt(path)
+    assert len(scan["table"]["path"]) == 6
+    assert (scan["table"]["src_xsize"] != scan["table"]["dst_xsize"]).sum() == 1
+    # without a window the resampled source sends the whole VRT to one source
+    s = pixtract.plan_sources(path)
+    assert s.kind == "single" and "resampled" in s.note
+    # cells in the first two tile columns stay off the resampled tile
+    v = dense(path)
+    cells = random_runs(400, 600, n=300, n_id=5, seed=21, max_len=200)
+    cells["col_end"] = np.minimum(cells["col_end"], 600)
+    win = pixtract.cells_window(cells)
+    s = pixtract.plan_sources(path, window=win)
+    assert s.kind == "vrt" and len(s) == 4 and "4 of 6" in s.note
+    assert s.xoff.tolist() == [0, 300, 0, 300]
+    got = pixtract.extract_cells(path, cells)
+    np.testing.assert_array_equal(got["value"], v[got["row"], got["col"]])
+    assert got["value"].size == _run_lengths(cells, v.shape).sum()
