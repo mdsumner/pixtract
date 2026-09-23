@@ -42,6 +42,7 @@ pix_sources <- function(dsn, band = 1L, expand_vrt = TRUE) {
   grid <- list(gt = ds$getGeoTransform(), ncol = d[1L], nrow = d[2L])
   nodata <- ds$getNoDataValue(band)
   bs <- ds$getBlockSize(band)
+  dtype <- ds$getDataTypeName(band)
   single <- function(note = "") {
     .sources(data.frame(path = dsn, band = band, col0 = 1, row0 = 1,
                         xsize = grid$ncol, ysize = grid$nrow,
@@ -51,17 +52,23 @@ pix_sources <- function(dsn, band = 1L, expand_vrt = TRUE) {
                         transparent = NA_real_),
              grid, nodata, dsn, "single", note)
   }
-  if (!expand_vrt || ds$getDriverShortName() != "VRT") return(single())
-  res <- tryCatch(.vrt_sources(ds, dsn, band, grid, nodata),
-                  pix_unsupported = function(e) conditionMessage(e))
-  if (is.character(res)) return(single(paste("VRT read as one source:", res)))
-  if (is.null(res)) single() else res
+  res <- if (!expand_vrt || ds$getDriverShortName() != "VRT") single() else
+    tryCatch(.vrt_sources(ds, dsn, band, grid, nodata),
+             pix_unsupported = function(e) conditionMessage(e))
+  if (is.character(res)) res <- single(paste("VRT read as one source:", res))
+  if (is.null(res)) res <- single()
+  attr(res, "dtype") <- dtype
+  attr(res, "itemsize") <- gdalraster::dt_size(dtype, as_bytes = TRUE)
+  res
 }
 
+## dtype, itemsize: data type name and bytes per cell of the queried band,
+## used to size reads in memory
 .sources <- function(df, grid, nodata, dsn, kind, note = "") {
   int <- setdiff(names(df), c("path", "transparent"))
   df[int] <- lapply(df[int], as.integer)
-  structure(df, grid = grid, nodata = nodata, dsn = dsn, kind = kind, note = note)
+  structure(df, grid = grid, nodata = nodata, dsn = dsn, kind = kind, note = note,
+            dtype = NA_character_, itemsize = 8L)
 }
 
 .unsupported <- function(msg) {
@@ -247,12 +254,20 @@ pix_block_groups <- function(plan) {
   list(start = start, stop = c(start[-1L] - 1L, n))
 }
 
-## what a plan will read, before any pixel I/O
+## what a plan will read, before any pixel I/O; with read windows from
+## pix_plan_reads(), reads and read_bytes (decoded, in memory) count what
+## the windows fetch
 pix_cost <- function(plan) {
   g <- pix_block_groups(plan)
   len <- plan$col1 - plan$col0 + 1L
-  list(cells = sum(len), segments = nrow(plan),
-       sources = length(unique(stats::na.omit(plan$src))),
-       blocks = sum(!is.na(plan$src[g$start])),
-       uncovered_cells = sum(len[is.na(plan$src)]))
+  out <- list(cells = sum(len), segments = nrow(plan),
+              sources = length(unique(stats::na.omit(plan$src))),
+              blocks = sum(!is.na(plan$src[g$start])),
+              uncovered_cells = sum(len[is.na(plan$src)]))
+  rd <- attr(plan, "reads")
+  if (!is.null(rd)) {
+    out$reads <- sum(!is.na(rd$src))
+    out$read_bytes <- sum(rd$bytes[!is.na(rd$src)])
+  }
+  out
 }

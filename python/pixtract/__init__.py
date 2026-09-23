@@ -6,3 +6,5 @@ from .cells import (cells_from_points, cells_from_burn, burn_args,
 from .execute import execute
 from .reduce import Place, Cells, Stats
 from .extract import extract_points, extract_cells, zonal_stats
+from .reads import (inspect_source, source_table, source_usage, plan_reads,
+                    block_reads, plan_extraction, DEFAULT_MEM)

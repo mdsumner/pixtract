@@ -5,6 +5,6 @@
 local({
   here <- tryCatch(dirname(sys.frame(1)$ofile), error = function(e) NULL)
   if (is.null(here) || !file.exists(file.path(here, "plan.R"))) here <- "R"
-  for (f in c("grid.R", "plan.R", "cells.R", "reduce.R", "execute.R", "extract.R"))
+  for (f in c("grid.R", "plan.R", "cells.R", "reduce.R", "execute.R", "reads.R", "extract.R"))
     sys.source(file.path(here, f), envir = globalenv())
 })

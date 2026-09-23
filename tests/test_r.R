@@ -89,6 +89,20 @@ for (nm in names(fixtures)) {
   ok(all(is.na(pv[!inside])), paste(nm, "outside points are NA"))
   ok(identical(is.na(pv[inside]), is.na(ref_p)) && all(pv[inside] == ref_p, na.rm = TRUE),
      paste(nm, "points"))
+
+  ## read windows (pix_plan_reads): the same values at any memory budget
+  for (mem in c(1, 2^14, 2^17, 2^30)) {
+    gw <- pix_extract_cells(f, cells, mem = mem)
+    gw <- gw[order(gw$run, gw$col), ]
+    ok(identical(gw$col, ref$col) && identical(gw$row, ref$row) &&
+         identical(is.na(gw$value), is.na(ref$value)) &&
+         all(gw$value == ref$value, na.rm = TRUE), paste(nm, "windows, mem", mem))
+    ok(identical(pix_extract_points(f, x, y, mem = mem), pv), paste(nm, "points windows, mem", mem))
+  }
+  p <- pix_plan_reads(pix_plan(cells, pix_sources(f)), mem = 2^15)
+  rd <- attr(p, "reads")
+  ok(all(rd$bytes[!is.na(rd$src)] <= 2^15 | rd$blocks[!is.na(rd$src)] == 1L), paste(nm, "budget"))
+  ok(sum(rd$cells) == pix_cost(p)$cells && !is.unsorted(p$read), paste(nm, "reads cover plan"))
 }
 
 ## grid logic: the edge cases shared with tests/test_grid.py (0-based on disk)
@@ -107,6 +121,44 @@ ok(identical(cell_from_row_col(c(10, 5), c(1, 1, 5, 3, 6, 1), c(1, 10, 10, 4, 1,
 ok(isTRUE(all.equal(extent_dim_to_gt(c(100, 110, -37, -30), c(1000, 700)),
                     c(100, 0.01, 0, -30, 0, -0.01))), "extent_dim_to_gt")
 
+## read windows follow the query: 2048 x 2048 Float32, 128 x 128 blocks (64 KiB)
+big <- make_tile(file.path(td, "big.tif"), 2048, 2048, c(128, 128), c(0, 0), 1, 0)
+reads_for <- function(x, y, ...) {
+  s <- pix_sources(big)
+  plan <- pix_plan(pix_cells_points(x, y, attr(s, "grid")), s)
+  list(plan = plan, p = pix_plan_reads(plan, mem = 2^30, ...))
+}
+set.seed(2)
+r <- reads_for(700 + runif(2e4, 0, 350), -700 - runif(2e4, 0, 350))
+ok(pix_usage(r$plan)$occupancy == 1 && pix_cost(r$p)$reads == 1L, "clustered query: one window")
+b <- seq(1, 15, by = 2)                        # one point in 8 blocks on a diagonal
+r <- reads_for((b - 1) * 128 + 10.5, -((b - 1) * 128 + 10.5))
+u <- pix_usage(r$plan)
+ok(u$blocks == 8L && u$span == 15 * 15, "scattered usage")
+ok(pix_cost(r$p)$reads == 8L && pix_cost(r$p)$read_bytes == 8 * 128 * 128 * 4, "scattered query: block reads")
+g <- expand.grid(br = 5:8, bc = 5:8); g <- g[(g$br + g$bc) %% 2 == 0, ]
+x <- (g$bc - 1) * 128 + 10.5; y <- -((g$br - 1) * 128 + 10.5)
+ok(pix_cost(reads_for(x, y)$p)$reads == 8L, "checkerboard, local: block reads")
+ok(pix_cost(reads_for(x, y, request_bytes = pix_remote_request_bytes)$p)$reads == 1L,
+   "checkerboard, remote: one window")
+
+info <- pix_inspect(fixtures$mosaic)
+ok(info$driver == "VRT" && info$kind == "vrt" && info$dtype == "Float32" && info$itemsize == 4,
+   "inspect")
+ok(info$table$nblocks_x[1] == 5 && info$table$nblocks_y[1] == 4, "inspect block layout")
+ok(isTRUE(all.equal(unlist(info$table[2, c("xmin", "xmax", "ymin", "ymax")], use.names = FALSE),
+                    c(103, 106, -32, -30))), "inspect source extent")
+ovr <- file.path(td, "ovr.tif")
+translate(fixtures$single, ovr, cl_arg = c("-co", "TILED=YES"), quiet = TRUE)
+ds <- new(GDALRaster, ovr, read_only = FALSE); ds$quiet <- TRUE
+ds$buildOverviews("NEAREST", c(2L, 4L), 0L); ds$close()
+ov <- pix_inspect(ovr)$overviews
+ok(identical(ov$level, 1:2) && identical(as.numeric(ov$ncol), c(500, 250)) && ov$factor[1] == 2,
+   "inspect overviews")
+u <- pix_usage(pix_plan(data.frame(row = 1, col_start = 1, col_end = 900, id = 1),
+                        pix_sources(fixtures$mosaic)))
+ok(identical(u$src, 1:3) && all(u$cells == 300) && identical(u$blocks, c(5L, 3L, 2L)), "usage")
+
 src <- pix_sources(fixtures$mosaic)
 ok(attr(src, "kind") == "vrt" && nrow(src) == 6L, "mosaic expands to 6 sources")
 ok(attr(pix_sources(fixtures$overlap_nodata), "kind") == "single", "overlap + NODATA falls back")
@@ -120,4 +172,5 @@ ok(all(raw$row == cells$row - 1L) && all(raw$col_end == cells$col_end), "disk is
 back <- pix_read_cells(p)
 ok(isTRUE(all.equal(back, cells, check.attributes = FALSE)), "cells round-trip")
 
-cat(sprintf("R tests passed (%d fixtures x 3 checks, plus sources and cells I/O)\n", length(fixtures)))
+cat(sprintf("R tests passed (%d fixtures x 3 checks and read windows, plus read planning, sources and cells I/O)\n",
+            length(fixtures)))
