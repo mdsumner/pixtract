@@ -1,9 +1,9 @@
 from .grid import (rowcol_from_xy, cell_from_row_col, gt_dim_to_extent,
                    extent_dim_to_gt)
 from .plan import (Grid, Sources, Plan, default_planner, plan_sources,
-                   plan_cells, cost)
+                   scan_vrt, plan_cells, cost)
 from .cells import (cells_from_points, cells_from_burn, burn_args,
-                    read_cells, write_cells)
+                    cells_window, read_cells, write_cells)
 from .execute import execute
 from .reduce import Place, Cells, Stats
 from .extract import extract_points, extract_cells, zonal_stats

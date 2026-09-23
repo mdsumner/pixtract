@@ -12,7 +12,7 @@ from typing import Literal
 
 import numpy as np
 
-from .cells import cells_from_points
+from .cells import cells_from_points, cells_window
 from .execute import execute
 from .plan import plan_cells, plan_sources
 from .reads import plan_reads
@@ -73,7 +73,7 @@ def _windows(plan, mem, max_workers):
 def extract_cells(raster_path, cells, band=1, backend=None, max_workers=None,
                   mem=None):
     """Every cell of a run table with its value (row, col, id, w, run, value)."""
-    sources = plan_sources(raster_path, band)
+    sources = plan_sources(raster_path, band, window=cells_window(cells))
     plan = _windows(plan_cells(cells, sources), mem, max_workers)
     return execute(plan, Cells(), backend=backend, max_workers=max_workers)
 
@@ -81,6 +81,6 @@ def extract_cells(raster_path, cells, band=1, backend=None, max_workers=None,
 def zonal_stats(raster_path, cells, band=1, backend=None, max_workers=None,
                 mem=None):
     """count, weight, sum, mean, min, max per id over a run table."""
-    sources = plan_sources(raster_path, band)
+    sources = plan_sources(raster_path, band, window=cells_window(cells))
     plan = _windows(plan_cells(cells, sources), mem, max_workers)
     return execute(plan, Stats(), backend=backend, max_workers=max_workers)
