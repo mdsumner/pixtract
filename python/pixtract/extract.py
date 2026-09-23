@@ -79,8 +79,14 @@ def extract_cells(raster_path, cells, band=1, backend=None, max_workers=None,
 
 
 def zonal_stats(raster_path, cells, band=1, backend=None, max_workers=None,
-                mem=None):
-    """count, weight, sum, mean, min, max per id over a run table."""
+                mem=None, n_id=None):
+    """count, weight, sum, mean, min, max per id over a run table.
+
+    n_id sets the number of zones (default: largest id + 1), so zones with
+    no cells, such as trailing ids, still get a row.
+    """
     sources = plan_sources(raster_path, band, window=cells_window(cells))
     plan = _windows(plan_cells(cells, sources), mem, max_workers)
+    if n_id is not None:
+        plan.n_id = max(int(n_id), plan.n_id)
     return execute(plan, Stats(), backend=backend, max_workers=max_workers)
