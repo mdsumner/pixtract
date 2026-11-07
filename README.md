@@ -147,6 +147,8 @@ Run from the repo root.
 | read planning on a synthetic mosaic (offline) | `examples/read_plan_synthetic.py` | `examples/read_plan_synthetic.R` |
 | read planning on Copernicus GLO-30 (S3) | `examples/read_plan_glo30.py` | `examples/read_plan_glo30.R` |
 | Swiss cantons on the global COP30 VRT (26,475 tiles) | `examples/cantons_cop30_global.py` | |
+| Wherobots WorldClim countries, night-light counties, points (S3) | `examples/wherobots_worldclim.py` | |
+| human footprint (HFP-100) mean per PAD-US protected area (S3) | `examples/hfp_padus.py` | |
 
 The cantons example reproduces the Apache Sedona "group by, but for pixels"
 benchmark: 26 cantons over 18 GLO-90 tiles (a 7200 x 3600 mosaic) give
@@ -162,6 +164,29 @@ burn is sparse), and `plan_sources(dsn, window=cells_window(cells))` keeps the 1
 sources the burn's window touches. Only those have to be 1:1 copies; the 14,589
 resampled high-latitude sources elsewhere no longer send the whole VRT to one
 source. 63,054,224 cells, 36 reads, 357 MiB decoded.
+
+The WorldClim example reruns the Wherobots "Raster Data Analysis With Spatial
+SQL" post on the same public files. The point values match exactly (12 months
+of precipitation and the night-light value at Missoula). Yearly precipitation
+per country is the sum of 12 monthly country means; for large countries the
+cell-centre rule lands within about 0.1 to 1 percent of the published values
+(Colombia 2633.9 vs 2632.0, Malaysia 2879.5 vs 2881.2). Six of the 20
+published values, all small islands, match exactly only when a cell counts
+when its lower-right corner is inside, a half-cell offset in Sedona's
+rasterization at the time (the post used allTouched = true). The published
+county night-light means do not correspond to a mean over the county on this
+raster under any rule tried (centre, corner, all touched, whole county or the
+post's per-256-tile sum), so they are printed for reference only.
+
+The HFP example is the workload from the Pangeo thread "Advice for scalable
+raster-vector extraction": the coverage-weighted mean of a 14 GB global 100 m
+COG under each of PAD-US 3.0's 438,113 polygons, where exactextract took about
+10 minutes on one core with local files and xarray-based approaches ran out
+of memory. Reading the COG remotely on 4 cores it takes about 10 minutes (half
+of it for a dozen polygons that wrap around the globe in Mollweide), and 99.95%
+of the means for polygons without holes equal the published
+`pad_raster_means.csv` to float32 precision. Polygons with holes are off
+because of a controlledburn bug, `exploration/2026-09-23_burn_hole_cells.py`.
 
 ## Tests
 
